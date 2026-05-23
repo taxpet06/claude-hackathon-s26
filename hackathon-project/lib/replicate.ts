@@ -2,11 +2,28 @@ import Replicate from "replicate";
 
 const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });
 
+// ryan5453/demucs — verified model on Replicate
+const DEMUCS_VERSION = "5a7041cc9b82e5a558fea6b3d7b12dea89625e89da33f0447bd727c2d0ab9e77";
+
 export async function startStemSeparation(audioUrl: string): Promise<string> {
+  // Fetch the audio server-side and upload to Replicate directly.
+  // iTunes preview URLs are geo-blocked so Replicate can't fetch them directly.
+  const audioRes = await fetch(audioUrl, {
+    headers: { "User-Agent": "Mozilla/5.0" },
+  });
+  if (!audioRes.ok) throw new Error(`Failed to fetch audio: ${audioRes.status}`);
+
+  const audioBuffer = await audioRes.arrayBuffer();
+  const audioBlob = new Blob([audioBuffer], { type: audioRes.headers.get("content-type") ?? "audio/mp4" });
+
   const prediction = await replicate.predictions.create({
-    version: "d8f710e2442b0b46bb0b0c685f2c7f1e7c31d20a0a7e70e93f2e1f1b0f9c07f",
-    model: "adirik/demucs",
-    input: { audio: audioUrl },
+    version: DEMUCS_VERSION,
+    input: {
+      audio: audioBlob,
+      model: "htdemucs",
+      stem: "none",
+      output_format: "mp3",
+    },
   });
   return prediction.id;
 }
@@ -32,16 +49,16 @@ export async function getPredictionStatus(predictionId: string): Promise<Predict
     return {
       status: "succeeded",
       stems: {
-        drums: output.drums ?? output[0] ?? "",
-        bass: output.bass ?? output[1] ?? "",
-        vocals: output.vocals ?? output[2] ?? "",
-        other: output.other ?? output[3] ?? "",
+        drums: output.drums ?? "",
+        bass: output.bass ?? "",
+        vocals: output.vocals ?? "",
+        other: output.other ?? "",
       },
     };
   }
 
   return {
     status: prediction.status as PredictionResult["status"],
-    error: prediction.error as string | undefined,
+    error: typeof prediction.error === "string" ? prediction.error : undefined,
   };
 }

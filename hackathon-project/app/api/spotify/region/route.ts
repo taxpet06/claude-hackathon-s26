@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getPlaylistTracks } from "@/lib/spotify";
+import { getRegionTracks } from "@/lib/spotify";
 import { findRegionById } from "@/lib/regions";
 
 export async function GET(req: NextRequest) {
@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   if (!region) return NextResponse.json({ error: "Region not found" }, { status: 404 });
 
   try {
-    const tracks = await getPlaylistTracks(region.playlistId);
+    const tracks = await getRegionTracks(region.name, region.country);
     return NextResponse.json({
       region: { id: region.id, name: region.name, coords: region.coords },
       tracks,
