@@ -1,83 +1,58 @@
+// Uses iTunes Search API (free, no key needed) instead of Spotify
 import { SpotifyTrack } from "@/types/spotify";
 
-let cachedToken: string | null = null;
-let tokenExpiry = 0;
-
-async function getAccessToken(): Promise<string> {
-  if (cachedToken && Date.now() < tokenExpiry) return cachedToken;
-
-  const res = await fetch("https://accounts.spotify.com/api/token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Authorization:
-        "Basic " +
-        Buffer.from(
-          `${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`
-        ).toString("base64"),
-    },
-    body: "grant_type=client_credentials",
-  });
-
-  if (!res.ok) throw new Error("Failed to fetch Spotify token");
-  const data = await res.json();
-  cachedToken = data.access_token;
-  tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
-  return cachedToken!;
+function mapItunesTrack(t: any): SpotifyTrack {
+  return {
+    id: t.trackId?.toString() ?? t.collectionId?.toString() ?? Math.random().toString(),
+    name: t.trackName ?? t.collectionName ?? "Unknown",
+    artist: t.artistName ?? "Unknown",
+    albumArt: t.artworkUrl100?.replace("100x100", "300x300") ?? "",
+    previewUrl: t.previewUrl ?? null,
+    popularity: 0,
+    spotifyUrl: t.trackViewUrl ?? "",
+  };
 }
 
-export async function getPlaylistTracks(playlistId: string): Promise<SpotifyTrack[]> {
-  const token = await getAccessToken();
-  const res = await fetch(
-    `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=30&fields=items(track(id,name,artists,album,preview_url,popularity,external_urls))`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  if (!res.ok) throw new Error(`Spotify playlist fetch failed: ${res.status}`);
-  const data = await res.json();
+export async function getRegionTracks(regionName: string, countryCode: string): Promise<SpotifyTrack[]> {
+  // Try country top chart first
+  try {
+    const chartRes = await fetch(
+      `https://itunes.apple.com/${countryCode}/rss/topsongs/limit=25/json`,
+      { next: { revalidate: 3600 } }
+    );
+    if (chartRes.ok) {
+      const data = await chartRes.json();
+      const entries: any[] = data?.feed?.entry ?? [];
+      if (entries.length > 0) {
+        // Chart feed format is different — fetch full track data for preview URLs
+        const ids = entries.slice(0, 20).map((e: any) => e.id?.attributes?.["im:id"]).filter(Boolean).join(",");
+        if (ids) {
+          const lookupRes = await fetch(`https://itunes.apple.com/lookup?id=${ids}&entity=song`);
+          if (lookupRes.ok) {
+            const lookupData = await lookupRes.json();
+            const tracks = (lookupData.results ?? []).filter((t: any) => t.kind === "song").map(mapItunesTrack);
+            if (tracks.length > 0) return tracks;
+          }
+        }
+      }
+    }
+  } catch {}
 
-  return (data.items as any[])
-    .map((item: any) => item.track)
-    .filter((t: any) => t?.id)
-    .map((t: any) => ({
-      id: t.id,
-      name: t.name,
-      artist: t.artists?.[0]?.name ?? "Unknown",
-      albumArt: t.album?.images?.[0]?.url ?? "",
-      previewUrl: t.preview_url ?? null,
-      popularity: t.popularity ?? 0,
-      spotifyUrl: t.external_urls?.spotify ?? "",
-    }));
+  // Fallback: search by region name
+  return searchTracks(regionName, 20, countryCode);
 }
 
-export async function searchTracks(query: string, limit = 20): Promise<SpotifyTrack[]> {
-  const token = await getAccessToken();
+export async function searchTracks(query: string, limit = 20, country = "US"): Promise<SpotifyTrack[]> {
   const res = await fetch(
-    `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=${limit}`,
-    { headers: { Authorization: `Bearer ${token}` } }
+    `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&entity=song&country=${country}&limit=${limit}`,
+    { next: { revalidate: 600 } }
   );
-  if (!res.ok) throw new Error(`Spotify search failed: ${res.status}`);
+  if (!res.ok) throw new Error(`iTunes search failed: ${res.status}`);
   const data = await res.json();
-
-  return (data.tracks?.items ?? [])
-    .filter((t: any) => t?.id)
-    .map((t: any) => ({
-      id: t.id,
-      name: t.name,
-      artist: t.artists?.[0]?.name ?? "Unknown",
-      albumArt: t.album?.images?.[0]?.url ?? "",
-      previewUrl: t.preview_url ?? null,
-      popularity: t.popularity ?? 0,
-      spotifyUrl: t.external_urls?.spotify ?? "",
-    }));
+  return (data.results ?? []).filter((t: any) => t.kind === "song").map(mapItunesTrack);
 }
 
-export async function searchPlaylists(query: string): Promise<string | null> {
-  const token = await getAccessToken();
-  const res = await fetch(
-    `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=playlist&limit=5`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  if (!res.ok) return null;
-  const data = await res.json();
-  return data.playlists?.items?.[0]?.id ?? null;
+// Keep for backwards compat with search route
+export async function searchPlaylists(_query: string): Promise<string | null> {
+  return null;
 }
