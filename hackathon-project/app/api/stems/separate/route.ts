@@ -10,6 +10,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ predictionId, status: "starting" });
   } catch (err) {
     console.error("Stem separation error:", err);
-    return NextResponse.json({ error: "Failed to start stem separation" }, { status: 500 });
+    return NextResponse.json({ error: "Failed to start stem separation", detail: String(err) }, { status: 500 });
   }
 }
